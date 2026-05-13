@@ -1,0 +1,20 @@
+{
+  "name": "pocket-hero",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "apps/bot"
+  ],
+  "scripts": {
+    "dev": "concurrently -n web,bot -c cyan,magenta \"npm run dev:web\" \"npm run dev:bot\"",
+    "dev:web": "npm run dev -w @pocket-hero/web",
+    "dev:bot": "npm run dev -w @pocket-hero/bot",
+    "build": "npm run build -w @pocket-hero/web && npm run build -w @pocket-hero/bot",
+    "typecheck": "npm run typecheck -w @pocket-hero/web && npm run typecheck -w @pocket-hero/bot"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.6.3"
+  }
+}

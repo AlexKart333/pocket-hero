@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-bg: 15 16 32;
+  --color-card: 24 25 45;
+  --color-primary: 124 58 237;
+  --color-accent: 245 158 11;
+  --color-danger: 239 68 68;
+  --color-success: 34 197 94;
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+  background: radial-gradient(circle at top, rgba(124, 58, 237, 0.2), transparent 32rem), rgb(var(--color-bg));
+  color: var(--tg-theme-text-color, #f8fafc);
+  overflow-x: hidden;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.safe-bottom {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 88px);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+
+body[data-theme='light'] {
+  --color-bg: 32 36 56;
+  --color-card: 44 49 74;
+  --color-primary: 124 58 237;
+  --color-accent: 245 158 11;
+  background: radial-gradient(circle at top, rgba(245, 158, 11, 0.14), transparent 32rem), rgb(var(--color-bg));
+}
+
+body[data-theme='dark'] {
+  --color-bg: 15 16 32;
+  --color-card: 24 25 45;
+}
