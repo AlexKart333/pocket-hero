@@ -407,7 +407,7 @@ export function performBattleTurn(battleState: BattleState, action: BattleAction
       seasonPoints: battle.enemy.boss ? 35 : 15,
       items: item ? [item] : []
     };
-    logs.push({ key: 'battle.log.victory', values: { enemy: option.enemyId ?? 'goblin' } });
+    logs.push({ key: 'battle.log.victory', values: { enemy: battle.enemy.name.en } });
     battle.log = [...battle.log, ...logs];
     return battle;
   }
