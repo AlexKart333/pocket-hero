@@ -41,11 +41,16 @@ export function ResultScreen() {
         <h1 className="mt-4 text-2xl font-black text-white">{translate(language, result.victory ? 'result.victoryTitle' : 'result.lossTitle')}</h1>
         <p className="mt-2 text-sm text-white/60">{translate(language, result.victory ? 'result.victoryText' : 'result.lossText')}</p>
       </section>
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <StatCard label={translate(language, 'common.xp')} value={result.xp} />
         <StatCard label={translate(language, 'common.gold')} value={result.gold} />
+        <StatCard label={translate(language, 'common.sparks')} value={result.sparks} />
         <StatCard label={translate(language, 'common.sp')} value={result.seasonPoints} />
       </div>
+      <section className="rounded-3xl border border-white/10 bg-card/90 p-4 text-sm text-white/65">
+        <p>{translate(language, 'result.healthRestored')}</p>
+        {result.lostSparks > 0 ? <p className="mt-2 text-danger">{translate(language, 'result.sparksLost', { sparks: result.lostSparks })}</p> : null}
+      </section>
       <section className="space-y-3">
         {result.items.map((item) => <ItemCard key={item.instanceId} item={item} language={language} />)}
       </section>

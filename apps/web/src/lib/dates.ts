@@ -31,8 +31,16 @@ export function startOfWeekKey(dateInput: string | Date): string {
 
 export function formatCountdown(ms: number): string {
   const safe = Math.max(0, ms);
-  const totalMinutes = Math.ceil(safe / 60000);
-  const h = Math.floor(totalMinutes / 60);
-  const m = totalMinutes % 60;
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  const totalSeconds = Math.ceil(safe / 1000);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+export function nextLocalMidnight(now: Date = new Date()): Date {
+  const next = new Date(now);
+  next.setHours(24, 0, 0, 0);
+  return next;
 }

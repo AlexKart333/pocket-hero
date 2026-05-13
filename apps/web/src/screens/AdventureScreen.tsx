@@ -26,9 +26,11 @@ export function AdventureScreen() {
   return (
     <div className="space-y-4">
       <section className="rounded-3xl border border-white/10 bg-card/90 p-4 shadow-glow">
+        <p className="text-sm font-semibold text-accent">{translate(language, run.currentRoom.locationKey)}</p>
         <h1 className="text-2xl font-black text-white">{translate(language, 'adventure.title')}</h1>
-        <p className="text-sm text-white/60">{translate(language, 'adventure.room', { step: run.step, max: run.maxSteps })}</p>
-        <div className="mt-4 grid grid-cols-3 gap-2">
+        <p className="text-sm text-white/60">{translate(language, run.currentRoom.locationDescriptionKey)}</p>
+        <p className="mt-1 text-xs text-white/45">{translate(language, 'adventure.room', { step: run.step, max: run.maxSteps })}</p>
+        <div className="mt-4 grid gap-2" style={{ gridTemplateColumns: `repeat(${run.maxSteps}, minmax(0, 1fr))` }}>
           {Array.from({ length: run.maxSteps }, (_, index) => (
             <div key={index} className={`h-2 rounded-full ${index + 1 <= run.step ? 'bg-primary' : 'bg-white/10'}`} />
           ))}

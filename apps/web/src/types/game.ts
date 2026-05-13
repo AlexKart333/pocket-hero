@@ -66,6 +66,14 @@ export interface Equipped {
   cosmetic?: string;
 }
 
+export interface HeroTraining {
+  hp: number;
+  attack: number;
+  defense: number;
+  speed: number;
+  critChance: number;
+}
+
 export interface Hero {
   name: string;
   classId: ClassId;
@@ -73,12 +81,14 @@ export interface Hero {
   xp: number;
   baseStats: CombatStats;
   currentHp: number;
+  training: HeroTraining;
 }
 
 export interface Resources {
   gold: number;
   gems: number;
   seasonPoints: number;
+  sparks: number;
 }
 
 export interface EnergyState {
@@ -147,6 +157,13 @@ export interface PlayerSettings {
   lastIdleClaimAt: string;
 }
 
+export interface DeathEcho {
+  amount: number;
+  enemyId: string;
+  step: number;
+  createdAt: string;
+}
+
 export interface PlayerState {
   id: string;
   telegramId?: number;
@@ -166,6 +183,7 @@ export interface PlayerState {
   purchases: PurchaseRecord[];
   stats: PlayerStats;
   settings: PlayerSettings;
+  deathEcho?: DeathEcho;
 }
 
 export interface EnemyDefinition {
@@ -194,6 +212,8 @@ export interface RoomOption {
 export interface AdventureRoom {
   id: string;
   step: number;
+  locationKey: string;
+  locationDescriptionKey: string;
   options: [RoomOption, RoomOption];
 }
 
@@ -201,6 +221,7 @@ export interface AdventureReward {
   xp: number;
   gold: number;
   seasonPoints: number;
+  sparks: number;
   items: InventoryItem[];
 }
 
@@ -220,6 +241,7 @@ export interface AdventureRun {
   rewards: AdventureReward;
   completed: boolean;
   victory?: boolean;
+  deathEcho?: Pick<DeathEcho, 'enemyId' | 'step'>;
   roomLog: RoomLogEntry[];
 }
 
@@ -251,17 +273,21 @@ export interface AdventureResult {
   xp: number;
   gold: number;
   seasonPoints: number;
+  sparks: number;
+  lostSparks: number;
+  recoveredSparks: number;
+  healthRestored: boolean;
   items: InventoryItem[];
 }
 
 export interface SeasonReward {
   level: number;
   free: {
-  gold?: number;
-  gems?: number;
-  energy?: number;
-  cosmeticItemId?: string;
-};
+    gold?: number;
+    gems?: number;
+    energy?: number;
+    cosmeticItemId?: string;
+  };
   premium: {
     gold?: number;
     gems?: number;

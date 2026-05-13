@@ -16,12 +16,13 @@ import {
   sellItem as engineSellItem,
   startAdventure as engineStartAdventure,
   updateDailyStreak,
-  updateQuestProgress
+  updateQuestProgress,
+  upgradeHeroStat as engineUpgradeHeroStat
 } from '../lib/gameEngine';
 import { detectDefaultLanguage } from '../i18n';
 import { clearPlayerState, loadLanguage, loadPlayerState, saveLanguage, savePlayerState } from '../lib/storage';
 import { telegram } from '../lib/telegram';
-import type { AdventureResult, AdventureRun, BattleAction, BattleState, ClassId, PlayerState, ProductId, ThemeMode } from '../types/game';
+import type { AdventureResult, AdventureRun, BattleAction, BattleState, ClassId, HeroTraining, PlayerState, ProductId, ThemeMode } from '../types/game';
 import type { Language } from '../types/i18n';
 
 export interface ToastState {
@@ -54,6 +55,8 @@ interface GameStore {
   claimIdleReward: () => void;
   claimQuest: (questId: string) => void;
   claimSeasonReward: (level: number, premium: boolean) => void;
+  upgradeHeroStat: (stat: keyof HeroTraining) => void;
+  refreshPlayer: () => void;
   buyProduct: (productId: ProductId) => Promise<void>;
   resetProgress: () => void;
   showToast: (toast: ToastState) => void;
@@ -67,9 +70,23 @@ function persist(player: PlayerState | null): void {
   }
 }
 
+function normalizePlayer(player: PlayerState): PlayerState {
+  const next = structuredClone(player) as PlayerState;
+  const resources = next.resources;
+  next.resources = {
+    gold: resources?.gold ?? 0,
+    gems: resources?.gems ?? 0,
+    seasonPoints: resources?.seasonPoints ?? 0,
+    sparks: resources?.sparks ?? 0
+  };
+  next.hero.training = next.hero.training ?? { hp: 0, attack: 0, defense: 0, speed: 0, critChance: 0 };
+  return next;
+}
+
 function syncPlayer(player: PlayerState): PlayerState {
   const now = new Date();
-  let next = refillEnergy(player, now);
+  let next = normalizePlayer(player);
+  next = refillEnergy(next, now);
   next = updateDailyStreak(next, now);
   const stats = calculateHeroStats(next);
   next.hero.currentHp = Math.min(stats.hp, Math.max(1, next.hero.currentHp));
@@ -252,6 +269,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
     persist(nextPlayer);
     telegram.haptic.notification('success');
     get().showToast({ key: 'toast.rewardClaimed', type: 'success' });
+  },
+
+  upgradeHeroStat: (stat) => {
+    const player = get().player;
+    if (!player) return;
+    const { player: nextPlayer, data } = engineUpgradeHeroStat(player, stat);
+    set({ player: nextPlayer });
+    persist(nextPlayer);
+    telegram.haptic.notification(data.upgraded ? 'success' : 'warning');
+    get().showToast({ key: data.upgraded ? 'toast.statUpgraded' : 'toast.notEnoughTrainingCurrency', type: data.upgraded ? 'success' : 'error' });
+  },
+
+  refreshPlayer: () => {
+    const player = get().player;
+    if (!player) return;
+    const nextPlayer = syncPlayer(player);
+    set({ player: nextPlayer });
+    persist(nextPlayer);
   },
 
   buyProduct: async (productId) => {

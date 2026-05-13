@@ -1,6 +1,6 @@
 import { HERO_CLASSES, getHeroClass } from '../data/classes';
 import { ENEMIES, getScaledEnemy } from '../data/enemies';
-import { getItem, ITEMS, RARITIES } from '../data/items';
+import { getItem, getLootCandidatesForClass, ITEMS, RARITIES } from '../data/items';
 import { DAILY_QUESTS, QUESTS, WEEKLY_QUESTS } from '../data/quests';
 import { CURRENT_SEASON } from '../data/seasons';
 import type {
@@ -15,6 +15,7 @@ import type {
   CreatePlayerInput,
   GameEngineResult,
   GameEventType,
+  HeroTraining,
   InventoryItem,
   ItemDefinition,
   PlayerState,
@@ -23,7 +24,7 @@ import type {
   Rarity,
   RoomOption
 } from '../types/game';
-import { ENERGY_MAX, ENERGY_REFILL_MINUTES, IDLE_REWARD_HOURS, itemTypeSlots, rarityMultiplier, rarityOrder, xpForNextLevel } from './balance';
+import { ENERGY_MAX, ENERGY_REFILL_MINUTES, IDLE_REWARD_HOURS, applyTrainingToStats, itemTypeSlots, rarityMultiplier, rarityOrder, trainingCost, xpForNextLevel } from './balance';
 import { createId, createRng } from './rng';
 import { dayKey, hours, isSameDay, isYesterday, isoNow, minutes, startOfWeekKey } from './dates';
 
@@ -108,11 +109,12 @@ export function createNewPlayer(input: CreatePlayerInput): PlayerState {
       level: 1,
       xp: 0,
       baseStats: heroClass.baseStats,
-      currentHp: heroClass.baseStats.hp
+      currentHp: heroClass.baseStats.hp,
+      training: { hp: 0, attack: 0, defense: 0, speed: 0, critChance: 0 }
     },
     inventory: [starterItem],
     equipped: starterEquipped as PlayerState['equipped'],
-    resources: { gold: 80, gems: 0, seasonPoints: 0 },
+    resources: { gold: 80, gems: 0, seasonPoints: 0, sparks: 0 },
     energy: { current: ENERGY_MAX, max: ENERGY_MAX, lastRefillAt: now.toISOString() },
     quests: createQuestProgress(now),
     season: {
@@ -130,7 +132,8 @@ export function createNewPlayer(input: CreatePlayerInput): PlayerState {
 }
 
 export function calculateHeroStats(player: PlayerState): CombatStats {
-  const stats: CombatStats = { ...player.hero.baseStats };
+  let stats: CombatStats = { ...player.hero.baseStats };
+  stats = applyTrainingToStats(stats, player.hero.training ?? { hp: 0, attack: 0, defense: 0, speed: 0, critChance: 0 });
   stats.hp += (player.hero.level - 1) * 5;
   stats.attack += Math.floor((player.hero.level - 1) * 1.8);
   stats.defense += Math.floor((player.hero.level - 1) * 1.1);
@@ -204,44 +207,97 @@ export function claimIdleReward(player: PlayerState, now: Date = new Date()): Ga
   return { player: next, data: { available: true, gold, xp } };
 }
 
-export function generateRoom(seed: string, step: number): AdventureRoom {
-  const rng = createRng(`${seed}-room-${step}`);
-  const nonBossEnemies = ENEMIES.filter((enemy) => !enemy.boss);
+const LOCATION_KEYS = [
+  'adventure.location.shireFields',
+  'adventure.location.whisperingWoods',
+  'adventure.location.oldRoad',
+  'adventure.location.hauntedMarsh',
+  'adventure.location.ironMines',
+  'adventure.location.frozenPass',
+  'adventure.location.ashWastes',
+  'adventure.location.doomPeak'
+] as const;
+
+const OPTION_VARIANTS: Record<'monster' | 'treasure' | 'shrine' | 'trader' | 'event', string[]> = {
+  monster: ['growl', 'ambush', 'bridge', 'camp', 'shadow'],
+  treasure: ['chest', 'satchel', 'ruins', 'crystal', 'wagon'],
+  shrine: ['shrine', 'spring', 'campfire', 'obelisk', 'tree'],
+  trader: ['trader', 'smith', 'hermit', 'cart', 'collector'],
+  event: ['mist', 'ravine', 'riddle', 'storm', 'footprints']
+};
+
+function getLocationIndex(step: number, maxSteps: number): number {
+  if (maxSteps <= 1) return 0;
+  return Math.min(LOCATION_KEYS.length - 1, Math.floor(((step - 1) / (maxSteps - 1)) * LOCATION_KEYS.length));
+}
+
+function pickEnemyForStep(seed: string, step: number, maxSteps: number): string {
+  const rng = createRng(`${seed}-enemy-${step}`);
+  const progress = maxSteps <= 1 ? 1 : (step - 1) / (maxSteps - 1);
   const bosses = ENEMIES.filter((enemy) => enemy.boss);
-  const types = step >= 3 ? (['monster', 'treasure', 'shrine'] as const) : (['monster', 'treasure', 'shrine', 'trader', 'event'] as const);
+  if (step === maxSteps) return rng.pick(bosses).id;
+  const maxDifficulty = progress < 0.25 ? 2 : progress < 0.55 ? 4 : 5;
+  const minDifficulty = progress < 0.35 ? 1 : progress < 0.7 ? 2 : 3;
+  const pool = ENEMIES.filter((enemy) => !enemy.boss && enemy.difficulty >= minDifficulty && enemy.difficulty <= maxDifficulty);
+  return rng.pick(pool.length ? pool : ENEMIES.filter((enemy) => !enemy.boss)).id;
+}
+
+function roomTypeForChoice(seed: string, step: number, maxSteps: number, index: number): RoomOption['type'] {
+  const rng = createRng(`${seed}-type-${step}-${index}`);
+  if (step === maxSteps && index === 0) return 'monster';
+  const progress = maxSteps <= 1 ? 1 : (step - 1) / (maxSteps - 1);
+  const types: RoomOption['type'][] = progress > 0.65 ? ['monster', 'monster', 'treasure', 'shrine', 'event'] : ['monster', 'treasure', 'shrine', 'trader', 'event'];
+  return rng.pick(types);
+}
+
+export function generateRoom(seed: string, step: number, maxSteps = 3, deathEcho?: PlayerState['deathEcho']): AdventureRoom {
+  const rng = createRng(`${seed}-room-${step}`);
+  const locationIndex = getLocationIndex(step, maxSteps);
+  const locationKey = LOCATION_KEYS[locationIndex];
   const makeOption = (index: number): RoomOption => {
-    const type = step >= 3 && index === 0 ? 'monster' : rng.pick(types);
-    const enemyPool = step >= 3 ? bosses : nonBossEnemies;
-    const enemy = rng.pick(enemyPool);
+    const isEcho = Boolean(deathEcho && deathEcho.step === step && index === 0);
+    const type: RoomOption['type'] = isEcho ? 'monster' : roomTypeForChoice(seed, step, maxSteps, index);
+    const enemyId = isEcho ? deathEcho?.enemyId : type === 'monster' ? pickEnemyForStep(seed, step + index, maxSteps) : undefined;
+    const variants = OPTION_VARIANTS[type];
+    const variant = isEcho ? 'echo' : rng.pick(variants);
+    const progressRisk = Math.min(5, 1 + Math.ceil((step / maxSteps) * 4));
     return {
-      id: `${step}_${index}_${type}`,
+      id: `${step}_${index}_${type}_${variant}`,
       type,
-      labelKey: `adventure.option.${type}.label`,
-      descriptionKey: `adventure.option.${type}.description`,
-      risk: type === 'monster' ? Math.min(5, 2 + step) : rng.int(1, 4),
+      labelKey: `adventure.option.${type}.${variant}.label`,
+      descriptionKey: `adventure.option.${type}.${variant}.description`,
+      risk: type === 'monster' ? progressRisk : rng.int(1, Math.max(2, progressRisk)),
       rewardKey:
         type === 'monster'
-          ? 'adventure.reward.loot'
+          ? 'adventure.reward.lootSparks'
           : type === 'treasure'
-            ? rng.chance(0.5) ? 'adventure.reward.loot' : 'adventure.reward.gold'
+            ? rng.chance(0.55) ? 'adventure.reward.loot' : 'adventure.reward.gold'
             : type === 'shrine'
               ? 'adventure.reward.heal'
               : type === 'trader'
-                ? 'adventure.reward.safe'
+                ? 'adventure.reward.goldSparks'
                 : 'adventure.reward.mystery',
-      enemyId: type === 'monster' ? enemy.id : undefined
+      enemyId
     };
   };
   let first = makeOption(0);
   let second = makeOption(1);
-  if (first.type === second.type && step < 3) second = makeOption(2);
-  return { id: `room_${step}_${seed}`, step, options: [first, second] };
+  if (first.type === second.type && step !== maxSteps) second = makeOption(2);
+  return {
+    id: `room_${step}_${seed}`,
+    step,
+    locationKey,
+    locationDescriptionKey: `${locationKey}.desc`,
+    options: [first, second]
+  };
 }
 
 export function startAdventure(player: PlayerState): GameEngineResult<AdventureRun | null> {
   let next = refillEnergy(player, new Date());
   if (next.energy.current <= 0) return { player: next, data: null };
   const seed = `${next.id}-${Date.now()}-${next.stats.adventuresStarted}`;
+  const rng = createRng(`${seed}-length`);
+  const maxSteps = Math.max(rng.int(5, 8), next.deathEcho?.step ?? 0);
   next.energy.current -= 1;
   next.stats.adventuresStarted += 1;
   next = updateQuestProgress(next, { type: 'adventure_started', amount: 1 });
@@ -249,9 +305,9 @@ export function startAdventure(player: PlayerState): GameEngineResult<AdventureR
     id: createId('run', seed),
     seed,
     step: 1,
-    maxSteps: 3,
-    currentRoom: generateRoom(seed, 1),
-    rewards: { xp: 0, gold: 0, seasonPoints: 0, items: [] },
+    maxSteps,
+    currentRoom: generateRoom(seed, 1, maxSteps, next.deathEcho),
+    rewards: { xp: 0, gold: 0, seasonPoints: 0, sparks: 0, items: [] },
     completed: false,
     roomLog: []
   };
@@ -263,22 +319,25 @@ export function resolveRoomChoice(player: PlayerState, run: AdventureRun, choice
   let nextPlayer = clonePlayer(player);
   let nextRun = structuredClone(run) as AdventureRun;
   const rng = createRng(`${run.seed}-${run.step}-${choiceId}`);
+  const roomSparks = 3 + run.step * 2;
 
   if (option.type === 'monster') {
     const battle = startBattle(nextPlayer, option.enemyId ?? 'goblin', `${run.seed}-battle-${run.step}`);
-    nextRun.roomLog.push({ step: run.step, optionType: 'monster', messageKey: 'adventure.log.monster', values: { enemy: option.enemyId ?? 'goblin' } });
+    nextRun.roomLog.push({ step: run.step, optionType: 'monster', messageKey: player.deathEcho?.step === run.step && player.deathEcho.enemyId === option.enemyId ? 'adventure.log.echoFound' : 'adventure.log.monster', values: { enemy: option.enemyId ?? 'goblin' } });
     return { player: nextPlayer, run: nextRun, battle };
   }
 
+  nextRun.rewards.sparks += roomSparks;
+
   if (option.type === 'treasure') {
     if (rng.chance(0.42)) {
-      const item = rollLoot(nextPlayer.hero.level, `${run.seed}-treasure-${run.step}`);
+      const item = rollLoot(nextPlayer.hero.level, `${run.seed}-treasure-${run.step}`, nextPlayer.hero.classId);
       nextRun.rewards.items.push(item);
-      nextRun.roomLog.push({ step: run.step, optionType: 'treasure', messageKey: 'adventure.log.treasureItem', values: { item: item.itemId } });
+      nextRun.roomLog.push({ step: run.step, optionType: 'treasure', messageKey: 'adventure.log.treasureItem', values: { item: item.itemId, sparks: roomSparks } });
     } else {
-      const gold = rng.int(20, 45) + nextPlayer.hero.level * 4;
+      const gold = rng.int(20, 45) + nextPlayer.hero.level * 4 + run.step * 2;
       nextRun.rewards.gold += gold;
-      nextRun.roomLog.push({ step: run.step, optionType: 'treasure', messageKey: 'adventure.log.treasureGold', values: { gold } });
+      nextRun.roomLog.push({ step: run.step, optionType: 'treasure', messageKey: 'adventure.log.treasureGold', values: { gold, sparks: roomSparks } });
     }
   }
 
@@ -287,25 +346,27 @@ export function resolveRoomChoice(player: PlayerState, run: AdventureRun, choice
     const hp = rng.int(8, 16) + nextPlayer.hero.level * 2;
     nextPlayer.hero.currentHp = Math.min(stats.hp, nextPlayer.hero.currentHp + hp);
     nextRun.rewards.seasonPoints += 12;
-    nextRun.roomLog.push({ step: run.step, optionType: 'shrine', messageKey: 'adventure.log.shrineHeal', values: { hp } });
+    nextRun.roomLog.push({ step: run.step, optionType: 'shrine', messageKey: 'adventure.log.shrineHeal', values: { hp, sparks: roomSparks } });
   }
 
   if (option.type === 'trader') {
-    const gold = rng.int(12, 28) + nextPlayer.hero.level * 3;
+    const gold = rng.int(12, 28) + nextPlayer.hero.level * 3 + run.step * 2;
     nextRun.rewards.gold += gold;
-    nextRun.rewards.xp += 10;
-    nextRun.roomLog.push({ step: run.step, optionType: 'trader', messageKey: 'adventure.log.traderDeal', values: { gold } });
+    nextRun.rewards.xp += 10 + run.step;
+    nextRun.rewards.sparks += 2;
+    nextRun.roomLog.push({ step: run.step, optionType: 'trader', messageKey: 'adventure.log.traderDeal', values: { gold, sparks: roomSparks + 2 } });
   }
 
   if (option.type === 'event') {
     if (rng.chance(0.55)) {
-      const gold = rng.int(25, 50);
+      const gold = rng.int(25, 50) + run.step * 2;
       nextRun.rewards.gold += gold;
-      nextRun.roomLog.push({ step: run.step, optionType: 'event', messageKey: 'adventure.log.eventGold', values: { gold } });
+      nextRun.roomLog.push({ step: run.step, optionType: 'event', messageKey: 'adventure.log.eventGold', values: { gold, sparks: roomSparks } });
     } else {
-      const hp = rng.int(4, 10);
+      const hp = rng.int(4, 10) + Math.floor(run.step / 2);
       nextPlayer.hero.currentHp = Math.max(1, nextPlayer.hero.currentHp - hp);
-      nextRun.roomLog.push({ step: run.step, optionType: 'event', messageKey: 'adventure.log.eventDamage', values: { hp } });
+      nextRun.rewards.sparks += 3;
+      nextRun.roomLog.push({ step: run.step, optionType: 'event', messageKey: 'adventure.log.eventDamage', values: { hp, sparks: roomSparks + 3 } });
     }
   }
 
@@ -314,7 +375,7 @@ export function resolveRoomChoice(player: PlayerState, run: AdventureRun, choice
     nextRun.victory = true;
   } else {
     nextRun.step += 1;
-    nextRun.currentRoom = generateRoom(nextRun.seed, nextRun.step);
+    nextRun.currentRoom = generateRoom(nextRun.seed, nextRun.step, nextRun.maxSteps, nextPlayer.deathEcho);
   }
 
   return { player: nextPlayer, run: nextRun };
@@ -337,7 +398,7 @@ export function startBattle(player: PlayerState, enemyId: string, seed = `${Date
     seed,
     log: [],
     completed: false,
-    rewards: { xp: 0, gold: 0, seasonPoints: 0, items: [] }
+    rewards: { xp: 0, gold: 0, seasonPoints: 0, sparks: 0, items: [] }
   };
 }
 
@@ -347,10 +408,10 @@ function damageRoll(attack: number, defense: number, rngSeed: string): number {
   return Math.max(1, attack + variance - Math.floor(defense * 0.55));
 }
 
-function itemDropFromEnemy(enemyDifficulty: number, heroLevel: number, seed: string): InventoryItem | null {
+function itemDropFromEnemy(enemyDifficulty: number, heroLevel: number, classId: ClassId, seed: string): InventoryItem | null {
   const rng = createRng(seed);
   const chance = Math.min(0.22 + enemyDifficulty * 0.025, 0.42);
-  return rng.chance(chance) ? rollLoot(heroLevel, `${seed}-drop`) : null;
+  return rng.chance(chance) ? rollLoot(heroLevel, `${seed}-drop`, classId) : null;
 }
 
 export function performBattleTurn(battleState: BattleState, action: BattleAction): BattleState {
@@ -398,25 +459,31 @@ export function performBattleTurn(battleState: BattleState, action: BattleAction
 
   if (heroDamage > 0) battle.enemyHp = Math.max(0, battle.enemyHp - heroDamage);
   if (battle.enemyHp <= 0) {
-    const item = itemDropFromEnemy(battle.enemy.difficulty, Math.max(1, Math.floor(battle.heroStats.hp / 28)), `${battle.seed}-victory-${battle.turn}`);
+    const item = itemDropFromEnemy(battle.enemy.difficulty, Math.max(1, Math.floor(battle.heroStats.hp / 28)), battle.heroClassId, `${battle.seed}-victory-${battle.turn}`);
     battle.completed = true;
     battle.victory = true;
     battle.rewards = {
       xp: battle.enemy.xpReward,
       gold: battle.enemy.goldReward,
       seasonPoints: battle.enemy.boss ? 35 : 15,
+      sparks: battle.enemy.boss ? 55 : 12 + battle.enemy.difficulty * 6,
       items: item ? [item] : []
     };
-    logs.push({ key: 'battle.log.victory', values: { enemy: battle.enemy.name.en } });
+    logs.push({ key: 'battle.log.victory', values: { enemy: battle.enemyId } });
     battle.log = [...battle.log, ...logs];
     return battle;
   }
 
   if (!skipsEnemy) {
-    const enemyAttack = battle.defendNext ? Math.round(battle.enemy.attack * 0.55) : battle.enemy.attack;
-    const damage = damageRoll(enemyAttack, battle.heroStats.defense, `${battle.seed}-enemy-${battle.turn}`);
-    battle.heroHp = Math.max(0, battle.heroHp - damage);
-    logs.push({ key: battle.defendNext ? 'battle.log.enemyDefended' : 'battle.log.enemyHit', values: { enemy: battle.enemy.name.en, damage } });
+    const dodgeChance = Math.min(0.25, battle.heroStats.speed * 0.012);
+    if (!battle.defendNext && rng.chance(dodgeChance)) {
+      logs.push({ key: 'battle.log.heroDodged', values: { enemy: battle.enemyId } });
+    } else {
+      const enemyAttack = battle.defendNext ? Math.round(battle.enemy.attack * 0.55) : battle.enemy.attack;
+      const damage = damageRoll(enemyAttack, battle.heroStats.defense, `${battle.seed}-enemy-${battle.turn}`);
+      battle.heroHp = Math.max(0, battle.heroHp - damage);
+      logs.push({ key: battle.defendNext ? 'battle.log.enemyDefended' : 'battle.log.enemyHit', values: { enemy: battle.enemyId, damage } });
+    }
     battle.defendNext = false;
   }
 
@@ -427,6 +494,7 @@ export function performBattleTurn(battleState: BattleState, action: BattleAction
       xp: battle.enemy.xpReward,
       gold: battle.enemy.goldReward,
       seasonPoints: 5,
+      sparks: Math.max(2, Math.floor((12 + battle.enemy.difficulty * 6) * 0.3)),
       items: []
     };
     logs.push({ key: 'battle.log.loss' });
@@ -446,9 +514,14 @@ export function finishAdventure(player: PlayerState, run: AdventureRun): GameEng
     xp: Math.floor(run.rewards.xp * multiplier),
     gold: Math.floor(run.rewards.gold * multiplier),
     seasonPoints: Math.floor(run.rewards.seasonPoints * multiplier),
+    sparks: Math.floor(run.rewards.sparks * multiplier),
+    lostSparks: 0,
+    recoveredSparks: 0,
+    healthRestored: true,
     items: victory ? run.rewards.items : []
   };
   next.resources.gold += result.gold;
+  next.resources.sparks = (next.resources.sparks ?? 0) + result.sparks;
   next.stats.totalGoldEarned += result.gold;
   next.stats.adventuresCompleted += 1;
   next = addXp(next, result.xp);
@@ -460,16 +533,35 @@ export function finishAdventure(player: PlayerState, run: AdventureRun): GameEng
     next = updateQuestProgress(next, { type: 'item_found', amount: 1 });
     if (rarityOrder[item.rarity] >= rarityOrder.rare) next = updateQuestProgress(next, { type: 'rare_item_found', amount: 1 });
   }
+
+  if (!victory) {
+    const lost = Math.floor((next.resources.sparks ?? 0) * 0.5);
+    if (lost > 0) {
+      next.resources.sparks -= lost;
+      next.deathEcho = {
+        amount: lost,
+        enemyId: run.deathEcho?.enemyId ?? 'goblin',
+        step: run.deathEcho?.step ?? run.step,
+        createdAt: isoNow()
+      };
+      result.lostSparks = lost;
+    }
+  }
+
+  // Between adventures the hero automatically rests. Damage still matters inside
+  // the current journey, but every new adventure starts at full HP.
+  next.hero.currentHp = calculateHeroStats(next).hp;
+
   return { player: next, data: result };
 }
 
-export function rollLoot(playerLevel: number, seed: string): InventoryItem {
+export function rollLoot(playerLevel: number, seed: string, classId: ClassId = 'warrior'): InventoryItem {
   const rng = createRng(seed);
   const roll = rng.next();
   const rarity: Rarity = roll > 0.992 ? 'mythic' : roll > 0.96 ? 'legendary' : roll > 0.84 ? 'epic' : roll > 0.55 ? 'rare' : 'common';
-  const candidates = ITEMS.filter((item) => item.rarity === rarity && item.type !== 'cosmetic');
-  const fallback = ITEMS.filter((item) => item.rarity === 'common' && item.type !== 'cosmetic');
-  const definition = rng.pick(candidates.length ? candidates : fallback);
+  const candidates = getLootCandidatesForClass(classId, rarity);
+  const fallback = getLootCandidatesForClass(classId, 'common');
+  const definition = rng.pick(candidates.length ? candidates : fallback.length ? fallback : ITEMS.filter((item) => item.type !== 'cosmetic'));
   return createInventoryItem(definition.id, Math.max(1, playerLevel), seed);
 }
 
@@ -619,6 +711,21 @@ export function applyPurchase(player: PlayerState, productId: ProductId, source:
   return next;
 }
 
+export function upgradeHeroStat(player: PlayerState, stat: keyof HeroTraining): GameEngineResult<{ upgraded: boolean; cost: { sparks: number; gold: number } }> {
+  const next = clonePlayer(player);
+  const training = next.hero.training ?? { hp: 0, attack: 0, defense: 0, speed: 0, critChance: 0 };
+  const cost = trainingCost(training, stat);
+  if ((next.resources.sparks ?? 0) < cost.sparks || next.resources.gold < cost.gold) {
+    return { player: next, data: { upgraded: false, cost } };
+  }
+  next.resources.sparks -= cost.sparks;
+  next.resources.gold -= cost.gold;
+  next.hero.training = { ...training, [stat]: training[stat] + 1 };
+  const stats = calculateHeroStats(next);
+  next.hero.currentHp = stat === 'hp' ? stats.hp : Math.min(stats.hp, Math.max(1, next.hero.currentHp));
+  return { player: next, data: { upgraded: true, cost } };
+}
+
 export function mergeBattleRewardsIntoRun(player: PlayerState, run: AdventureRun, battle: BattleState): { player: PlayerState; run: AdventureRun } {
   let nextPlayer = clonePlayer(player);
   const nextRun = structuredClone(run) as AdventureRun;
@@ -626,6 +733,7 @@ export function mergeBattleRewardsIntoRun(player: PlayerState, run: AdventureRun
   nextRun.rewards.xp += battle.rewards.xp;
   nextRun.rewards.gold += battle.rewards.gold;
   nextRun.rewards.seasonPoints += battle.rewards.seasonPoints;
+  nextRun.rewards.sparks += battle.rewards.sparks;
   nextRun.rewards.items.push(...battle.rewards.items);
   if (battle.victory) {
     nextPlayer.stats.battlesWon += 1;
@@ -634,8 +742,14 @@ export function mergeBattleRewardsIntoRun(player: PlayerState, run: AdventureRun
       nextPlayer.stats.bossesDefeated += 1;
       nextPlayer = updateQuestProgress(nextPlayer, { type: 'boss_defeated', amount: 1 });
     }
+    if (nextPlayer.deathEcho && nextPlayer.deathEcho.step === nextRun.step && nextPlayer.deathEcho.enemyId === battle.enemyId) {
+      nextRun.rewards.sparks += nextPlayer.deathEcho.amount;
+      nextRun.roomLog.push({ step: nextRun.step, optionType: 'monster', messageKey: 'adventure.log.echoRecovered', values: { sparks: nextPlayer.deathEcho.amount } });
+      delete nextPlayer.deathEcho;
+    }
   } else {
     nextPlayer.stats.battlesLost += 1;
+    nextRun.deathEcho = { step: nextRun.step, enemyId: battle.enemyId };
   }
   const damageNumbers = battle.log.flatMap((entry) => (typeof entry.values?.damage === 'number' ? [entry.values.damage] : []));
   const maxDamage = damageNumbers.length ? Math.max(...damageNumbers) : 0;
@@ -645,7 +759,7 @@ export function mergeBattleRewardsIntoRun(player: PlayerState, run: AdventureRun
     nextRun.victory = Boolean(battle.victory);
   } else {
     nextRun.step += 1;
-    nextRun.currentRoom = generateRoom(nextRun.seed, nextRun.step);
+    nextRun.currentRoom = generateRoom(nextRun.seed, nextRun.step, nextRun.maxSteps, nextPlayer.deathEcho);
   }
   return { player: nextPlayer, run: nextRun };
 }

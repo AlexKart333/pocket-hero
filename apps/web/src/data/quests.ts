@@ -4,7 +4,7 @@ export const QUESTS: QuestDefinition[] = [
   {
     id: 'daily_complete_1_adventure', kind: 'daily', icon: '🗺️', target: 1, eventType: 'adventure_completed',
     name: { ru: 'Пройти 1 приключение', en: 'Complete 1 adventure' },
-    description: { ru: 'Завершите одно короткое подземелье сегодня.', en: 'Finish one short dungeon today.' },
+    description: { ru: 'Завершите одно короткое путешествие сегодня.', en: 'Finish one short journey today.' },
     reward: { xp: 35, gold: 30, seasonPoints: 20 }
   },
   {
@@ -34,7 +34,7 @@ export const QUESTS: QuestDefinition[] = [
   {
     id: 'weekly_complete_10_adventures', kind: 'weekly', icon: '🏕️', target: 10, eventType: 'adventure_completed',
     name: { ru: 'Пройти 10 приключений', en: 'Complete 10 adventures' },
-    description: { ru: 'Завершите десять подземелий за неделю.', en: 'Complete ten dungeons this week.' },
+    description: { ru: 'Завершите десять путешествий за неделю.', en: 'Complete ten journeys this week.' },
     reward: { xp: 150, gold: 180, seasonPoints: 90 }
   },
   {

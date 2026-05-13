@@ -1,4 +1,4 @@
-import type { ItemDefinition, Rarity } from '../types/game';
+import type { ClassId, ItemDefinition, Rarity } from '../types/game';
 
 export const RARITIES: Rarity[] = ['common', 'rare', 'epic', 'legendary', 'mythic'];
 
@@ -135,4 +135,32 @@ export function getItem(id: string): ItemDefinition | undefined {
 
 export function getItemsByRarity(rarity: Rarity): ItemDefinition[] {
   return ITEMS.filter((item) => item.rarity === rarity);
+}
+
+
+const UNIVERSAL_TAGS = new Set(['pet', 'luck', 'charm', 'orb', 'speed', 'rune', 'royal', 'spark', 'cosmetic']);
+
+export function isItemAllowedForClass(item: ItemDefinition, classId: ClassId): boolean {
+  if (item.type === 'cosmetic' || item.type === 'pet' || item.type === 'artifact') return true;
+
+  const tags = new Set(item.tags);
+  if ([...tags].some((tag) => UNIVERSAL_TAGS.has(tag))) return true;
+
+  if (item.type === 'weapon') {
+    if (classId === 'mage') return tags.has('magic') || tags.has('star');
+    if (classId === 'archer') return tags.has('bow') || tags.has('shadow') || tags.has('dagger');
+    return tags.has('blade') || tags.has('axe') || tags.has('mace') || tags.has('spear') || tags.has('holy') || tags.has('dragon');
+  }
+
+  if (item.type === 'armor') {
+    if (classId === 'mage') return tags.has('cloth') || tags.has('magic') || tags.has('silk') || tags.has('void');
+    if (classId === 'archer') return tags.has('cloth') || tags.has('leather') || tags.has('ranger') || tags.has('silk');
+    return tags.has('cloth') || tags.has('metal') || tags.has('plate') || tags.has('hide') || tags.has('royal');
+  }
+
+  return true;
+}
+
+export function getLootCandidatesForClass(classId: ClassId, rarity: Rarity): ItemDefinition[] {
+  return ITEMS.filter((item) => item.rarity === rarity && item.type !== 'cosmetic' && isItemAllowedForClass(item, classId));
 }

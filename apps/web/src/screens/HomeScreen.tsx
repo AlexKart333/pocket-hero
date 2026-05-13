@@ -1,11 +1,12 @@
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Battery, Coins, Flame, Star } from 'lucide-react';
+import { Battery, Coins, Flame, Sparkles, Star } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { CURRENT_SEASON } from '../data/seasons';
 import { QUESTS } from '../data/quests';
 import { pickLocalized, translate } from '../i18n';
 import { ENERGY_REFILL_MINUTES, IDLE_REWARD_HOURS, levelProgress } from '../lib/balance';
-import { formatCountdown, hours, minutes } from '../lib/dates';
+import { formatCountdown, hours, minutes, nextLocalMidnight } from '../lib/dates';
 import { calculateHeroStats, getQuestProgress } from '../lib/gameEngine';
 import { useGameStore } from '../store/gameStore';
 import { HeroAvatar } from '../components/HeroAvatar';
@@ -19,17 +20,37 @@ export function HomeScreen() {
   const startAdventure = useGameStore((state) => state.startAdventure);
   const claimIdleReward = useGameStore((state) => state.claimIdleReward);
   const claimQuest = useGameStore((state) => state.claimQuest);
+  const refreshPlayer = useGameStore((state) => state.refreshPlayer);
+  const [now, setNow] = useState(() => Date.now());
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const current = Date.now();
+      setNow(current);
+      const activePlayer = useGameStore.getState().player;
+      if (!activePlayer) return;
+      const nextEnergyTime = new Date(activePlayer.energy.lastRefillAt).getTime() + minutes(ENERGY_REFILL_MINUTES);
+      if (activePlayer.energy.current < activePlayer.energy.max && current >= nextEnergyTime) {
+        useGameStore.getState().refreshPlayer();
+      }
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   if (!player) return null;
 
   const stats = calculateHeroStats(player);
   const xpProgress = levelProgress(player.hero.level, player.hero.xp);
   const seasonLevel = Math.min(CURRENT_SEASON.levels, Math.floor(player.season.points / CURRENT_SEASON.pointsPerLevel) + 1);
   const seasonProgress = ((player.season.points % CURRENT_SEASON.pointsPerLevel) / CURRENT_SEASON.pointsPerLevel) * 100;
-  const nextEnergyAt = new Date(player.energy.lastRefillAt).getTime() + minutes(ENERGY_REFILL_MINUTES) - Date.now();
-  const idleReady = Date.now() - new Date(player.settings.lastIdleClaimAt).getTime() >= hours(IDLE_REWARD_HOURS);
+  const nextEnergyMs = new Date(player.energy.lastRefillAt).getTime() + minutes(ENERGY_REFILL_MINUTES) - now;
+  const idleMs = new Date(player.settings.lastIdleClaimAt).getTime() + hours(IDLE_REWARD_HOURS) - now;
+  const idleReady = idleMs <= 0;
+  const dailyResetMs = nextLocalMidnight(new Date(now)).getTime() - now;
 
   const handleStart = () => {
+    refreshPlayer();
     if (startAdventure()) navigate('/adventure');
   };
 
@@ -49,8 +70,19 @@ export function HomeScreen() {
 
       <div className="grid grid-cols-2 gap-3">
         <StatCard icon={<Coins size={15} />} label={translate(language, 'common.gold')} value={player.resources.gold} />
-        <StatCard icon={<Battery size={15} />} label={translate(language, 'common.energy')} value={`${player.energy.current}/${player.energy.max}`} />
-        <StatCard icon={<Flame size={15} />} label={translate(language, 'common.streak')} value={player.streak} />
+        <div className="rounded-2xl border border-white/10 bg-card/90 p-3 shadow-lg">
+          <div className="flex items-center gap-2 text-xs text-white/60"><Battery size={15} /><span>{translate(language, 'common.energy')}</span></div>
+          <div className="mt-1 text-lg font-bold text-white">{player.energy.current}/{player.energy.max}</div>
+          {player.energy.current < player.energy.max ? (
+            <div className="mt-1 text-[11px] text-accent">{translate(language, 'home.nextEnergyShort', { time: formatCountdown(nextEnergyMs) })}</div>
+          ) : <div className="mt-1 text-[11px] text-white/40">{translate(language, 'home.energyFull')}</div>}
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-card/90 p-3 shadow-lg">
+          <div className="flex items-center gap-2 text-xs text-white/60"><Flame size={15} /><span>{translate(language, 'common.streak')}</span></div>
+          <div className="mt-1 text-lg font-bold text-white">{player.streak}</div>
+          <div className="mt-1 text-[11px] text-white/45">{translate(language, 'home.streakHint')}</div>
+        </div>
+        <StatCard icon={<Sparkles size={15} />} label={translate(language, 'common.sparks')} value={player.resources.sparks ?? 0} />
         <StatCard icon={<Star size={15} />} label={translate(language, 'home.seasonPoints', { points: player.season.points })} value={`${translate(language, 'common.level')} ${seasonLevel}`} />
       </div>
 
@@ -64,7 +96,6 @@ export function HomeScreen() {
         </div>
         <div className="mt-4">
           <PrimaryButton onClick={handleStart} disabled={player.energy.current <= 0}>{translate(language, 'home.startAdventure')}</PrimaryButton>
-          {player.energy.current <= 0 ? <p className="mt-2 text-center text-xs text-white/50">{translate(language, 'home.nextEnergy', { time: formatCountdown(nextEnergyAt) })}</p> : null}
         </div>
       </section>
 
@@ -81,12 +112,16 @@ export function HomeScreen() {
           <h2 className="font-bold text-white">{translate(language, 'home.claimIdleReward')}</h2>
           <span className="text-xl">⏳</span>
         </div>
-        <p className="mb-3 text-sm text-white/60">{translate(language, idleReady ? 'home.idleReady' : 'home.idleNotReady')}</p>
+        <p className="mb-2 text-sm text-white/60">{translate(language, 'home.idleExplanation')}</p>
+        <p className="mb-3 text-xs text-white/45">{translate(language, idleReady ? 'home.idleReady' : 'home.idleTimer', { time: formatCountdown(idleMs) })}</p>
         <PrimaryButton variant={idleReady ? 'primary' : 'secondary'} onClick={claimIdleReward}>{translate(language, 'home.claimIdleReward')}</PrimaryButton>
       </section>
 
       <section className="space-y-3">
-        <h2 className="font-bold text-white">{translate(language, 'home.dailyQuests')}</h2>
+        <div className="flex items-end justify-between gap-3">
+          <h2 className="font-bold text-white">{translate(language, 'home.dailyQuests')}</h2>
+          <span className="text-xs text-white/45">{translate(language, 'home.dailyQuestReset', { time: formatCountdown(dailyResetMs) })}</span>
+        </div>
         {QUESTS.filter((quest) => quest.kind === 'daily').map((quest, index) => {
           const progress = getQuestProgress(player, quest.id);
           const value = progress?.progress ?? 0;
@@ -95,7 +130,8 @@ export function HomeScreen() {
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <div className="font-semibold text-white">{quest.icon} {pickLocalized(quest.name, language)}</div>
-                  <div className="text-xs text-white/50">{value}/{quest.target}</div>
+                  <div className="mt-1 text-xs text-white/50">{pickLocalized(quest.description, language)}</div>
+                  <div className="mt-1 text-xs text-white/50">{value}/{quest.target}</div>
                 </div>
                 <button disabled={!progress?.completed || progress.claimed} onClick={() => claimQuest(quest.id)} className="rounded-xl bg-white/10 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">
                   {translate(language, progress?.claimed ? 'common.claimed' : 'common.claim')}

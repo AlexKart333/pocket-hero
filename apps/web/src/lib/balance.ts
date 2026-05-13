@@ -1,4 +1,4 @@
-import type { ItemType, Rarity } from '../types/game';
+import type { CombatStats, HeroTraining, ItemType, Rarity } from '../types/game';
 
 export const ENERGY_MAX = 5;
 export const ENERGY_REFILL_MINUTES = 30;
@@ -46,4 +46,35 @@ export function rarityMultiplier(rarity: Rarity): number {
     legendary: 2.5,
     mythic: 3.3
   }[rarity];
+}
+
+export const TRAINING_INCREASE: Record<keyof HeroTraining, number> = {
+  hp: 5,
+  attack: 1,
+  defense: 1,
+  speed: 1,
+  critChance: 0.01
+};
+
+export function trainingLevelTotal(training: HeroTraining): number {
+  return training.hp + training.attack + training.defense + training.speed + training.critChance;
+}
+
+export function trainingCost(training: HeroTraining, stat: keyof HeroTraining): { sparks: number; gold: number } {
+  const total = trainingLevelTotal(training);
+  const statLevel = training[stat];
+  return {
+    sparks: 35 + total * 15 + statLevel * 10,
+    gold: 20 + total * 10 + statLevel * 8
+  };
+}
+
+export function applyTrainingToStats(stats: CombatStats, training: HeroTraining): CombatStats {
+  return {
+    hp: stats.hp + training.hp * TRAINING_INCREASE.hp,
+    attack: stats.attack + training.attack * TRAINING_INCREASE.attack,
+    defense: stats.defense + training.defense * TRAINING_INCREASE.defense,
+    speed: stats.speed + training.speed * TRAINING_INCREASE.speed,
+    critChance: stats.critChance + training.critChance * TRAINING_INCREASE.critChance
+  };
 }
