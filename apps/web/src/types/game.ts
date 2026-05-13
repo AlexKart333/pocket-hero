@@ -257,10 +257,11 @@ export interface AdventureResult {
 export interface SeasonReward {
   level: number;
   free: {
-    gold?: number;
-    gems?: number;
-    cosmeticItemId?: string;
-  };
+  gold?: number;
+  gems?: number;
+  energy?: number;
+  cosmeticItemId?: string;
+};
   premium: {
     gold?: number;
     gems?: number;
